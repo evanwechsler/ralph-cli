@@ -9,6 +9,13 @@
     "jsxImportSource": "@opentui/react",
     "allowJs": true,
 
+    // Effect Language Service
+    "plugins": [
+      {
+        "name": "@effect/language-service"
+      }
+    ],
+
     // Bundler mode
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
@@ -21,6 +28,11 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": true,
+
+    // Development enhancements  
+    "sourceMap": true,
+    "declarationMap": true,
 
     // Some stricter flags (disabled by default)
     "noUnusedLocals": false,
