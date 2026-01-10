@@ -3,6 +3,7 @@ import { LiveDatabaseLayer, TestDatabaseLayer } from "../db/client.js";
 import { AgentClient } from "./AgentClient.js";
 import { AgentSessionRepository } from "./AgentSessionRepository.js";
 import { EpicRepository } from "./EpicRepository.js";
+import { ExternalEditor } from "./ExternalEditor.js";
 import { TaskRepository } from "./TaskRepository.js";
 
 // ─────────────────────────────────────────────────────────────
@@ -36,6 +37,8 @@ export {
 	type ResumeOptions,
 } from "./AgentClient.js";
 
+export { ExternalEditor, ExternalEditorError } from "./ExternalEditor.js";
+
 export {
 	AgentSessionId,
 	type AgentEvent,
@@ -67,7 +70,10 @@ const RepositoryLayers = Layer.mergeAll(
 );
 
 // Non-database services (no dependencies)
-const ServiceLayers = Layer.mergeAll(AgentClient.Default);
+const ServiceLayers = Layer.mergeAll(
+	AgentClient.Default,
+	ExternalEditor.Default,
+);
 
 // Production layer: Database + Repositories + Services
 export const LiveServicesLayer = Layer.merge(

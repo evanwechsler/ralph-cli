@@ -1,6 +1,7 @@
 import { TextAttributes, type SelectOption } from "@opentui/core";
 import { useAtomSet } from "@effect-atom/atom-react";
 import { screenAtom } from "../../atoms/navigation.js";
+import { exitApp } from "../../index.js";
 
 const menuOptions: SelectOption[] = [
 	{
@@ -31,7 +32,7 @@ export function MainMenuScreen() {
 				setScreen({ type: "epic-creation" });
 				break;
 			case "exit":
-				process.exit(0);
+				exitApp(0);
 				break;
 		}
 	};
