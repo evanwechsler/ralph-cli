@@ -43,6 +43,22 @@ export const tasks = sqliteTable("tasks", {
 	...timestamps,
 });
 
+export const agentSessions = sqliteTable("agent_sessions", {
+	id: text("id").primaryKey(), // UUID
+	epicId: integer("epic_id").references(() => epics.id, {
+		onDelete: "set null",
+	}),
+	claudeSessionId: text("claude_session_id").notNull(),
+	status: text("status", {
+		enum: ["running", "paused", "completed", "failed"],
+	}).notNull(),
+	currentTaskId: integer("current_task_id").references(() => tasks.id, {
+		onDelete: "set null",
+	}),
+	lastMessageUuid: text("last_message_uuid"),
+	...timestamps,
+});
+
 // ─────────────────────────────────────────────────────────────
 // Relations
 // ─────────────────────────────────────────────────────────────
@@ -53,6 +69,14 @@ export const epicsRelations = relations(epics, ({ many }) => ({
 
 export const tasksRelations = relations(tasks, ({ one }) => ({
 	epic: one(epics, { fields: [tasks.epicId], references: [epics.id] }),
+}));
+
+export const agentSessionsRelations = relations(agentSessions, ({ one }) => ({
+	epic: one(epics, { fields: [agentSessions.epicId], references: [epics.id] }),
+	currentTask: one(tasks, {
+		fields: [agentSessions.currentTaskId],
+		references: [tasks.id],
+	}),
 }));
 
 // ─────────────────────────────────────────────────────────────
@@ -71,3 +95,8 @@ export type TaskCategory =
 	| "integration"
 	| "infrastructure"
 	| "testing";
+
+export type AgentSession = typeof agentSessions.$inferSelect;
+export type NewAgentSession = typeof agentSessions.$inferInsert;
+
+export type AgentSessionStatus = "running" | "paused" | "completed" | "failed";

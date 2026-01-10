@@ -1,5 +1,7 @@
 import { Layer } from "effect";
 import { LiveDatabaseLayer, TestDatabaseLayer } from "../db/client.js";
+import { AgentClient } from "./AgentClient.js";
+import { AgentSessionRepository } from "./AgentSessionRepository.js";
 import { EpicRepository } from "./EpicRepository.js";
 import { TaskRepository } from "./TaskRepository.js";
 
@@ -21,24 +23,60 @@ export {
 	UpdateTaskInput,
 } from "./TaskRepository.js";
 
+export {
+	AgentSessionRepository,
+	CreateAgentSessionInput,
+	UpdateAgentSessionInput,
+} from "./AgentSessionRepository.js";
+
+export {
+	AgentClient,
+	AgentClientError,
+	type AgentQueryOptions,
+	type ResumeOptions,
+} from "./AgentClient.js";
+
+export {
+	AgentSessionId,
+	type AgentEvent,
+	type TokenEvent,
+	type ToolStartEvent,
+	type ToolEndEvent,
+	type TurnCompleteEvent,
+	type SessionInitEvent,
+	type ResultEvent,
+	type ErrorEvent,
+	isTokenEvent,
+	isToolStartEvent,
+	isToolEndEvent,
+	isTurnCompleteEvent,
+	isSessionInitEvent,
+	isResultEvent,
+	isErrorEvent,
+} from "./AgentEvent.js";
+
 // ─────────────────────────────────────────────────────────────
 // Composite Layers
 // ─────────────────────────────────────────────────────────────
 
-// Combine all repository layers
+// Combine all repository layers (database-backed)
 const RepositoryLayers = Layer.mergeAll(
 	EpicRepository.Default,
 	TaskRepository.Default,
+	AgentSessionRepository.Default,
 );
 
-// Production layer: Database + Repositories
-export const LiveServicesLayer = Layer.provideMerge(
-	RepositoryLayers,
-	LiveDatabaseLayer,
+// Non-database services (no dependencies)
+const ServiceLayers = Layer.mergeAll(AgentClient.Default);
+
+// Production layer: Database + Repositories + Services
+export const LiveServicesLayer = Layer.merge(
+	ServiceLayers,
+	Layer.provideMerge(RepositoryLayers, LiveDatabaseLayer),
 );
 
-// Test layer: In-memory database + Repositories
-export const TestServicesLayer = Layer.provideMerge(
-	RepositoryLayers,
-	TestDatabaseLayer,
+// Test layer: In-memory database + Repositories + Services
+export const TestServicesLayer = Layer.merge(
+	ServiceLayers,
+	Layer.provideMerge(RepositoryLayers, TestDatabaseLayer),
 );
