@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { spawn } from "node:child_process";
+import { suspendRenderer, resumeRenderer } from "../renderer.js";
 
 // ─────────────────────────────────────────────────────────────
 // Errors
@@ -42,6 +43,9 @@ const makeExternalEditor = Effect.gen(function* () {
 					}),
 			});
 
+			// Suspend TUI before opening editor
+			yield* Effect.sync(() => suspendRenderer());
+
 			// Open editor and wait for it to close
 			yield* Effect.async<void, ExternalEditorError>((resume) => {
 				const child = spawn(editor, [tmpFile], {
@@ -49,6 +53,9 @@ const makeExternalEditor = Effect.gen(function* () {
 				});
 
 				child.on("close", (code) => {
+					// Resume TUI after editor closes
+					resumeRenderer();
+
 					if (code === 0) {
 						resume(Effect.void);
 					} else {
@@ -63,6 +70,9 @@ const makeExternalEditor = Effect.gen(function* () {
 				});
 
 				child.on("error", (err) => {
+					// Resume TUI on error too
+					resumeRenderer();
+
 					resume(
 						Effect.fail(
 							new ExternalEditorError({

@@ -5,7 +5,25 @@ import {
 	AgentClient,
 	type AgentClientError,
 	type AgentSessionId,
+	EpicRepository,
+	CreateEpicInput,
+	type EpicId,
+	ExternalEditor,
+	type ExternalEditorError,
 } from "../services/index.js";
+// Import directly to avoid circular dependency through services/index.js
+import { EpicDraftRepository } from "../services/EpicDraftRepository.js";
+import type { SqlError } from "@effect/sql/SqlError";
+import { extractTitleFromSpec } from "../utils/specParser.js";
+import {
+	type OpenQuestion,
+	type QuestionAnswer,
+	parseOpenQuestions,
+	formatAnswersForPrompt,
+	applyPatches,
+	removeAnsweredQuestions,
+	parsePatchResponse,
+} from "../utils/openQuestions.js";
 
 // ─────────────────────────────────────────────────────────────
 // Wizard Step Type
@@ -14,7 +32,13 @@ import {
 export type WizardStep =
 	| { type: "description" }
 	| { type: "generating" }
-	| { type: "review" };
+	| { type: "questions" }
+	| { type: "patching" }
+	| { type: "review" }
+	| { type: "feedback" }
+	| { type: "saving" }
+	| { type: "success"; epicId: EpicId }
+	| { type: "error"; message: string };
 
 // ─────────────────────────────────────────────────────────────
 // Generation Status with Progress Details
@@ -66,6 +90,64 @@ export const generationStatusAtom = pipe(
  */
 export const sessionIdAtom = pipe(
 	Atom.make<AgentSessionId | null>(null),
+	Atom.keepAlive,
+);
+
+/**
+ * Feedback input text for iteration
+ */
+export const feedbackAtom = pipe(Atom.make<string>(""), Atom.keepAlive);
+
+/**
+ * Error message to display in review step
+ */
+export const errorMessageAtom = pipe(
+	Atom.make<string | null>(null),
+	Atom.keepAlive,
+);
+
+/**
+ * Saved epic ID after successful save
+ */
+export const savedEpicIdAtom = pipe(
+	Atom.make<EpicId | null>(null),
+	Atom.keepAlive,
+);
+
+// ─────────────────────────────────────────────────────────────
+// Open Questions State Atoms
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Parsed open questions from the spec
+ */
+export const openQuestionsAtom = pipe(
+	Atom.make<OpenQuestion[]>([]),
+	Atom.keepAlive,
+);
+
+/**
+ * User's answers to open questions
+ * Map from QuestionId to QuestionAnswer
+ */
+export const questionAnswersAtom = pipe(
+	Atom.make<Map<string, QuestionAnswer>>(new Map()),
+	Atom.keepAlive,
+);
+
+/**
+ * Current question index (for step-by-step navigation)
+ */
+export const currentQuestionIndexAtom = pipe(
+	Atom.make<number>(0),
+	Atom.keepAlive,
+);
+
+/**
+ * Whether custom input mode is active for current question
+ */
+export const customInputModeAtom = pipe(
+	Atom.make<boolean>(false),
 	Atom.keepAlive,
 );
 
@@ -242,8 +324,28 @@ Generate a specification using the XML structure below. Include **only the secti
   </edge_cases>
 
   <open_questions>
-    [Unresolved items that may need revisiting]
-    - [Question]
+    <!-- For each unresolved decision that needs user input, provide structured options -->
+    <!-- Include this section ONLY if there are genuine open questions -->
+    <question id="[unique-id]">
+      <text>[Clear question about an unresolved decision]</text>
+      <context>[Why this matters and what depends on this decision]</context>
+      <options>
+        <!-- Provide 2-4 concrete options, mark your recommended one -->
+        <option id="a" recommended="true">
+          <label>[Short option name]</label>
+          <description>[Detailed explanation and trade-offs]</description>
+        </option>
+        <option id="b">
+          <label>[Alternative option]</label>
+          <description>[When this makes sense and trade-offs]</description>
+        </option>
+        <!-- Always include custom option as the last option -->
+        <option id="custom">
+          <label>Custom response</label>
+          <description>Provide your own answer to this question.</description>
+        </option>
+      </options>
+    </question>
   </open_questions>
 
   <success_criteria>
@@ -254,6 +356,29 @@ Generate a specification using the XML structure below. Include **only the secti
 \`\`\`
 
 Generate the specification now, including only the sections relevant to this project.
+`;
+
+const buildFeedbackPrompt = (
+	originalDescription: string,
+	previousSpec: string,
+	feedback: string,
+): string => `
+## Original Request
+
+${originalDescription}
+
+## Previous Specification
+
+${previousSpec}
+
+## User Feedback
+
+${feedback}
+
+---
+
+Please regenerate the specification incorporating the feedback above.
+Use the same XML structure as before. Focus on addressing the user's specific feedback while maintaining the quality and completeness of the specification.
 `;
 
 // ─────────────────────────────────────────────────────────────
@@ -356,7 +481,22 @@ export const generateSpecFn = appRuntime.fn<AgentClientError, string, string>(
 										result: event.result,
 										tokenCount,
 									});
-									ctx.set(wizardStepAtom, { type: "review" });
+
+									// Check for open questions in the generated spec
+									const specContent = ctx(specContentAtom);
+									const questions = parseOpenQuestions(specContent);
+
+									if (questions.length > 0) {
+										// Found questions - transition to questions step
+										ctx.set(openQuestionsAtom, questions);
+										ctx.set(currentQuestionIndexAtom, 0);
+										ctx.set(questionAnswersAtom, new Map());
+										ctx.set(customInputModeAtom, false);
+										ctx.set(wizardStepAtom, { type: "questions" });
+									} else {
+										// No questions - go directly to review
+										ctx.set(wizardStepAtom, { type: "review" });
+									}
 								} else {
 									ctx.set(generationStatusAtom, {
 										type: "error",
@@ -389,6 +529,402 @@ export const generateSpecFn = appRuntime.fn<AgentClientError, string, string>(
 );
 
 // ─────────────────────────────────────────────────────────────
+// Save Epic Function Atom
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Function atom that saves the epic to the database.
+ * Extracts title from spec content and creates a new epic.
+ */
+export const saveEpicFn = appRuntime.fn<SqlError, EpicId, string>((_, ctx) =>
+	Effect.gen(function* () {
+		const repo = yield* EpicRepository;
+		const draftRepo = yield* EpicDraftRepository;
+		const specContent = ctx(specContentAtom);
+
+		// Set saving state
+		ctx.set(wizardStepAtom, { type: "saving" });
+
+		// Extract title from spec
+		const title = extractTitleFromSpec(specContent);
+
+		// Create epic with spec as description
+		const epicId = yield* repo.create(
+			new CreateEpicInput({
+				title,
+				description: specContent,
+			}),
+		);
+
+		// Clear draft after successful save
+		yield* draftRepo.clear();
+
+		// Update atoms
+		ctx.set(savedEpicIdAtom, epicId);
+		ctx.set(wizardStepAtom, { type: "success", epicId });
+
+		return epicId;
+	}).pipe(
+		Effect.catchAll((error) =>
+			Effect.sync(() => {
+				ctx.set(
+					errorMessageAtom,
+					`Database error: ${error.message ?? "Unknown error"}`,
+				);
+				ctx.set(wizardStepAtom, { type: "review" });
+				return null as unknown as EpicId;
+			}),
+		),
+	),
+);
+
+// ─────────────────────────────────────────────────────────────
+// Edit in External Editor Function Atom
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Function atom that opens the spec in an external editor.
+ * Updates specContentAtom with edited content on success.
+ */
+export const editInEditorFn = appRuntime.fn<
+	ExternalEditorError,
+	string,
+	string
+>((_, ctx) =>
+	Effect.gen(function* () {
+		const editor = yield* ExternalEditor;
+		const currentSpec = ctx(specContentAtom);
+
+		// Open editor - TUI will be suspended while editor is open
+		const editedContent = yield* editor.openEditor(currentSpec);
+
+		// Update spec content with edited version
+		ctx.set(specContentAtom, editedContent);
+
+		// Stay in review step
+		ctx.set(wizardStepAtom, { type: "review" });
+
+		return editedContent;
+	}).pipe(
+		Effect.catchAll((error) =>
+			Effect.sync(() => {
+				ctx.set(errorMessageAtom, `Editor error: ${error.message}`);
+				// Stay in review step, spec unchanged
+				return ctx(specContentAtom); // Return current spec
+			}),
+		),
+	),
+);
+
+// ─────────────────────────────────────────────────────────────
+// Regenerate with Feedback Function Atom
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Function atom that regenerates the spec with user feedback.
+ * Creates a new session with the original description, previous spec, and feedback.
+ */
+export const regenerateWithFeedbackFn = appRuntime.fn<
+	AgentClientError,
+	string,
+	string
+>((_, ctx) =>
+	Effect.gen(function* () {
+		const client = yield* AgentClient;
+
+		const originalDescription = ctx(descriptionAtom);
+		const previousSpec = ctx(specContentAtom);
+		const feedback = ctx(feedbackAtom);
+
+		// Reset generation state
+		ctx.set(specContentAtom, "");
+		ctx.set(generationStatusAtom, {
+			type: "generating",
+			tokenCount: 0,
+			currentActivity: "Incorporating feedback...",
+			lastUpdate: Date.now(),
+		});
+		ctx.set(wizardStepAtom, { type: "generating" });
+		ctx.set(feedbackAtom, ""); // Clear feedback after capturing
+
+		const prompt = buildFeedbackPrompt(
+			originalDescription,
+			previousSpec,
+			feedback,
+		);
+
+		let tokenCount = 0;
+
+		const stream = client.runQuery(prompt, {
+			cwd: process.cwd(),
+			systemPromptAppend: SPEC_SYSTEM_PROMPT,
+			maxTurns: 10,
+		});
+
+		// Process stream events (same pattern as generateSpecFn)
+		yield* stream.pipe(
+			Stream.tap((event) =>
+				Effect.sync(() => {
+					switch (event.type) {
+						case "token": {
+							tokenCount++;
+							const current = ctx(specContentAtom);
+							ctx.set(specContentAtom, current + event.content);
+							ctx.set(generationStatusAtom, {
+								type: "generating",
+								tokenCount,
+								currentActivity: "Regenerating specification...",
+								lastUpdate: Date.now(),
+							});
+							break;
+						}
+						case "session_init":
+							ctx.set(sessionIdAtom, event.sessionId as AgentSessionId);
+							ctx.set(generationStatusAtom, {
+								type: "generating",
+								tokenCount,
+								currentActivity: "Session initialized",
+								lastUpdate: Date.now(),
+							});
+							break;
+						case "tool_start":
+							ctx.set(generationStatusAtom, {
+								type: "generating",
+								tokenCount,
+								currentActivity: `Using tool: ${event.tool}`,
+								lastUpdate: Date.now(),
+							});
+							break;
+						case "tool_end":
+							ctx.set(generationStatusAtom, {
+								type: "generating",
+								tokenCount,
+								currentActivity: `Tool completed: ${event.tool}`,
+								lastUpdate: Date.now(),
+							});
+							break;
+						case "turn_complete":
+							ctx.set(generationStatusAtom, {
+								type: "generating",
+								tokenCount,
+								currentActivity: "Processing turn...",
+								lastUpdate: Date.now(),
+							});
+							break;
+						case "result":
+							if (event.success) {
+								ctx.set(generationStatusAtom, {
+									type: "complete",
+									result: event.result,
+									tokenCount,
+								});
+								ctx.set(wizardStepAtom, { type: "review" });
+							} else {
+								ctx.set(generationStatusAtom, {
+									type: "error",
+									message: "Regeneration failed",
+									details: [event.result],
+								});
+							}
+							break;
+						case "error": {
+							const errorStatus: GenerationStatus = {
+								type: "error",
+								message: event.message,
+							};
+							if (event.errors) {
+								(errorStatus as { details: readonly string[] }).details =
+									event.errors;
+							}
+							ctx.set(generationStatusAtom, errorStatus);
+							break;
+						}
+					}
+				}),
+			),
+			Stream.runDrain,
+		);
+
+		return ctx(specContentAtom);
+	}),
+);
+
+// ─────────────────────────────────────────────────────────────
+// Patch Spec with Answers Function Atom
+// ─────────────────────────────────────────────────────────────
+
+const PATCH_SYSTEM_PROMPT = `You are generating search/replace patches for a specification based on user decisions.
+
+CRITICAL INSTRUCTIONS:
+1. Output ONLY valid JSON - no explanations, no markdown outside the JSON
+2. The JSON must have a "patches" array with find/replace objects
+3. Each patch must have exact "find" text that exists in the spec and "replace" text
+4. Keep patches minimal - only change what's necessary for the user's decisions
+5. Do NOT include patches for removing questions - that's handled automatically`;
+
+const buildPatchPrompt = (
+	specContent: string,
+	questions: OpenQuestion[],
+	answers: Map<string, QuestionAnswer>,
+): string => `
+## Current Specification
+
+${specContent}
+
+## User Decisions for Open Questions
+
+${formatAnswersForPrompt(questions, answers)}
+
+---
+
+## Your Task
+
+Generate JSON patches to update the specification based on the user's decisions.
+
+Output format (JSON only, no explanation):
+\`\`\`json
+{
+  "patches": [
+    {
+      "find": "exact text to find in the spec",
+      "replace": "replacement text"
+    }
+  ]
+}
+\`\`\`
+
+Rules:
+- Each "find" must be an EXACT substring from the current specification
+- Only include patches for sections that need to change based on the answers
+- Keep patches focused and minimal
+- If no changes are needed to the spec content, return {"patches": []}
+- Do NOT include patches for the <open_questions> section - that's handled automatically
+
+Output the JSON now:
+`;
+
+/**
+ * Function atom that patches the spec with user's answers to open questions.
+ * Uses JSON patches for efficiency - only generates the diffs, not the full spec.
+ */
+export const patchSpecWithAnswersFn = appRuntime.fn<
+	AgentClientError,
+	string,
+	string
+>((_, ctx) =>
+	Effect.gen(function* () {
+		const client = yield* AgentClient;
+
+		const specContent = ctx(specContentAtom);
+		const questions = ctx(openQuestionsAtom);
+		const answersMap = ctx(questionAnswersAtom);
+
+		// Set patching state
+		ctx.set(generationStatusAtom, {
+			type: "generating",
+			tokenCount: 0,
+			currentActivity: "Generating patches...",
+			lastUpdate: Date.now(),
+		});
+		ctx.set(wizardStepAtom, { type: "patching" });
+
+		const prompt = buildPatchPrompt(specContent, questions, answersMap);
+
+		let tokenCount = 0;
+		let patchResponse = "";
+
+		const stream = client.runQuery(prompt, {
+			cwd: process.cwd(),
+			systemPromptAppend: PATCH_SYSTEM_PROMPT,
+			maxTurns: 3, // Patching should be very quick
+		});
+
+		// Collect the response (should be small JSON)
+		yield* stream.pipe(
+			Stream.tap((event) =>
+				Effect.sync(() => {
+					switch (event.type) {
+						case "token": {
+							tokenCount++;
+							patchResponse += event.content;
+							ctx.set(generationStatusAtom, {
+								type: "generating",
+								tokenCount,
+								currentActivity: "Generating patches...",
+								lastUpdate: Date.now(),
+							});
+							break;
+						}
+						case "session_init":
+							ctx.set(sessionIdAtom, event.sessionId as AgentSessionId);
+							break;
+						case "result":
+							if (event.success) {
+								// Parse and apply patches
+								ctx.set(generationStatusAtom, {
+									type: "generating",
+									tokenCount,
+									currentActivity: "Applying patches...",
+									lastUpdate: Date.now(),
+								});
+
+								let updatedSpec = specContent;
+
+								// Parse the JSON patch response
+								const patches = parsePatchResponse(patchResponse);
+								if (patches && patches.patches.length > 0) {
+									updatedSpec = applyPatches(updatedSpec, patches);
+								}
+
+								// Remove answered questions programmatically
+								const answeredIds = Array.from(answersMap.keys());
+								updatedSpec = removeAnsweredQuestions(updatedSpec, answeredIds);
+
+								// Update spec content
+								ctx.set(specContentAtom, updatedSpec);
+								ctx.set(generationStatusAtom, {
+									type: "complete",
+									result: "Patches applied",
+									tokenCount,
+								});
+
+								// Clear questions state and go to review
+								ctx.set(openQuestionsAtom, []);
+								ctx.set(questionAnswersAtom, new Map());
+								ctx.set(wizardStepAtom, { type: "review" });
+							} else {
+								ctx.set(generationStatusAtom, {
+									type: "error",
+									message: "Patching failed",
+									details: [event.result],
+								});
+							}
+							break;
+						case "error": {
+							const errorStatus: GenerationStatus = {
+								type: "error",
+								message: event.message,
+							};
+							if (event.errors) {
+								(errorStatus as { details: readonly string[] }).details =
+									event.errors;
+							}
+							ctx.set(generationStatusAtom, errorStatus);
+							// On error, go back to questions step so user can try again
+							ctx.set(wizardStepAtom, { type: "questions" });
+							break;
+						}
+					}
+				}),
+			),
+			Stream.runDrain,
+		);
+
+		return ctx(specContentAtom);
+	}),
+);
+
+// ─────────────────────────────────────────────────────────────
 // Reset Function
 // ─────────────────────────────────────────────────────────────
 
@@ -403,4 +939,12 @@ export const resetWizard = (ctx: {
 	ctx.set(specContentAtom, "");
 	ctx.set(generationStatusAtom, { type: "idle" });
 	ctx.set(sessionIdAtom, null);
+	ctx.set(feedbackAtom, "");
+	ctx.set(errorMessageAtom, null);
+	ctx.set(savedEpicIdAtom, null);
+	// Clear open questions state
+	ctx.set(openQuestionsAtom, []);
+	ctx.set(questionAnswersAtom, new Map());
+	ctx.set(currentQuestionIndexAtom, 0);
+	ctx.set(customInputModeAtom, false);
 };

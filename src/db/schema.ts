@@ -59,6 +59,22 @@ export const agentSessions = sqliteTable("agent_sessions", {
 	...timestamps,
 });
 
+export const epicDrafts = sqliteTable("epic_drafts", {
+	id: integer("id").primaryKey(), // Always 1 for single-draft constraint
+	wizardStep: text("wizard_step").notNull(), // JSON: { type: "description" } etc.
+	description: text("description").notNull().default(""),
+	specContent: text("spec_content").notNull().default(""),
+	sessionId: text("session_id"), // AgentSessionId or null
+	feedback: text("feedback").notNull().default(""),
+	openQuestions: text("open_questions").notNull().default("[]"), // JSON array
+	questionAnswers: text("question_answers").notNull().default("{}"), // JSON object
+	currentQuestionIndex: integer("current_question_index").notNull().default(0),
+	customInputMode: integer("custom_input_mode", { mode: "boolean" })
+		.notNull()
+		.default(false),
+	...timestamps,
+});
+
 // ─────────────────────────────────────────────────────────────
 // Relations
 // ─────────────────────────────────────────────────────────────
@@ -100,3 +116,6 @@ export type AgentSession = typeof agentSessions.$inferSelect;
 export type NewAgentSession = typeof agentSessions.$inferInsert;
 
 export type AgentSessionStatus = "running" | "paused" | "completed" | "failed";
+
+export type EpicDraft = typeof epicDrafts.$inferSelect;
+export type NewEpicDraft = typeof epicDrafts.$inferInsert;

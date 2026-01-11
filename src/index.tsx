@@ -1,4 +1,4 @@
-import { createCliRenderer, type CliRenderer } from "@opentui/core";
+import { createCliRenderer } from "@opentui/core";
 import { createRoot, useKeyboard } from "@opentui/react";
 import {
 	RegistryProvider,
@@ -8,20 +8,15 @@ import {
 import { screenAtom } from "./atoms/navigation.js";
 import { MainMenuScreen } from "./screens/MainMenu/MainMenuScreen.js";
 import { EpicCreationScreen } from "./screens/EpicCreation/EpicCreationScreen.js";
+import {
+	setRenderer,
+	exitApp,
+	suspendRenderer,
+	resumeRenderer,
+} from "./renderer.js";
 
-// Global renderer reference for cleanup
-let appRenderer: CliRenderer | null = null;
-
-/**
- * Gracefully exit the application, ensuring terminal is restored
- */
-export function exitApp(code = 0): void {
-	if (appRenderer) {
-		appRenderer.destroy();
-		appRenderer = null;
-	}
-	process.exit(code);
-}
+// Re-export for backwards compatibility
+export { exitApp, suspendRenderer, resumeRenderer };
 
 function Router() {
 	const screen = useAtomValue(screenAtom);
@@ -50,7 +45,7 @@ function App() {
 }
 
 const renderer = await createCliRenderer();
-appRenderer = renderer;
+setRenderer(renderer);
 
 // Handle unexpected exits gracefully
 process.on("SIGINT", () => exitApp(0));

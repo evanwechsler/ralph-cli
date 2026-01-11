@@ -95,6 +95,24 @@ const initTestSchema = Effect.gen(function* () {
 			deleted_at INTEGER
 		)
 	`;
+
+	yield* sql`
+		CREATE TABLE IF NOT EXISTS epic_drafts (
+			id INTEGER PRIMARY KEY,
+			wizard_step TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			spec_content TEXT NOT NULL DEFAULT '',
+			session_id TEXT,
+			feedback TEXT NOT NULL DEFAULT '',
+			open_questions TEXT NOT NULL DEFAULT '[]',
+			question_answers TEXT NOT NULL DEFAULT '{}',
+			current_question_index INTEGER NOT NULL DEFAULT 0,
+			custom_input_mode INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			deleted_at INTEGER
+		)
+	`;
 });
 
 // Layer that initializes schema on startup

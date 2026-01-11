@@ -2,6 +2,7 @@ import { Layer } from "effect";
 import { LiveDatabaseLayer, TestDatabaseLayer } from "../db/client.js";
 import { AgentClient } from "./AgentClient.js";
 import { AgentSessionRepository } from "./AgentSessionRepository.js";
+import { EpicDraftRepository } from "./EpicDraftRepository.js";
 import { EpicRepository } from "./EpicRepository.js";
 import { ExternalEditor } from "./ExternalEditor.js";
 import { TaskRepository } from "./TaskRepository.js";
@@ -29,6 +30,8 @@ export {
 	CreateAgentSessionInput,
 	UpdateAgentSessionInput,
 } from "./AgentSessionRepository.js";
+
+export { EpicDraftRepository, EpicDraftState } from "./EpicDraftRepository.js";
 
 export {
 	AgentClient,
@@ -67,6 +70,7 @@ const RepositoryLayers = Layer.mergeAll(
 	EpicRepository.Default,
 	TaskRepository.Default,
 	AgentSessionRepository.Default,
+	EpicDraftRepository.Default,
 );
 
 // Non-database services (no dependencies)
