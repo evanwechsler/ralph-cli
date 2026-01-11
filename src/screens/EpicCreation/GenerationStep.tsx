@@ -60,7 +60,7 @@ function StatusIndicator({
 		const errorMessage =
 			effectError instanceof Error ? effectError.message : String(effectError);
 		return (
-			<box flexDirection="column">
+			<box flexDirection="column" width="100%">
 				<box>
 					<text fg="red">✗ </text>
 					<text>Error: {errorMessage}</text>
@@ -75,7 +75,7 @@ function StatusIndicator({
 
 		case "generating":
 			return (
-				<box flexDirection="column">
+				<box flexDirection="column" width="100%">
 					<box>
 						<text fg="cyan">● </text>
 						<text>{status.currentActivity}</text>
@@ -88,7 +88,7 @@ function StatusIndicator({
 
 		case "complete":
 			return (
-				<box flexDirection="column">
+				<box flexDirection="column" width="100%">
 					<box>
 						<text fg="green">✓ </text>
 						<text>Generation complete</text>
@@ -101,7 +101,7 @@ function StatusIndicator({
 
 		case "error":
 			return (
-				<box flexDirection="column">
+				<box flexDirection="column" width="100%">
 					<box>
 						<text fg="red">✗ </text>
 						<text>Error: {status.message}</text>
