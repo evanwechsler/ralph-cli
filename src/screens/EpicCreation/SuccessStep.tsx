@@ -67,7 +67,7 @@ export function SuccessStep() {
 				break;
 			case "menu":
 				resetWizard();
-				setScreen({ type: "main-menu" });
+				setScreen({ type: "epic-list" });
 				break;
 		}
 	};

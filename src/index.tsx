@@ -6,8 +6,8 @@ import {
 	useAtomSet,
 } from "@effect-atom/atom-react";
 import { screenAtom } from "./atoms/navigation.js";
-import { MainMenuScreen } from "./screens/MainMenu/MainMenuScreen.js";
 import { EpicCreationScreen } from "./screens/EpicCreation/EpicCreationScreen.js";
+import { EpicListScreen } from "./screens/EpicList/index.js";
 import {
 	setRenderer,
 	exitApp,
@@ -23,14 +23,24 @@ function Router() {
 	const setScreen = useAtomSet(screenAtom);
 
 	useKeyboard((key) => {
-		if (key.name === "escape" && screen.type !== "main-menu") {
-			setScreen({ type: "main-menu" });
+		// Escape returns to epic-list from epic-detail screen only
+		// (epic-creation handles its own escape, epic-list is root)
+		if (key.name === "escape" && screen.type === "epic-detail") {
+			setScreen({ type: "epic-list" });
 		}
 	});
 
 	switch (screen.type) {
-		case "main-menu":
-			return <MainMenuScreen />;
+		case "epic-list":
+			return <EpicListScreen />;
+		case "epic-detail":
+			// TODO: Implement EpicDetailScreen in Phase 3
+			return (
+				<box flexDirection="column" padding={1}>
+					<text>Epic Detail (Coming in Phase 3)</text>
+					<text>[Esc] Back</text>
+				</box>
+			);
 		case "epic-creation":
 			return <EpicCreationScreen />;
 	}

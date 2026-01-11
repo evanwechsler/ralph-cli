@@ -81,7 +81,7 @@ export function ReviewStep() {
 			case "exit":
 				// Save draft and exit to main menu
 				saveDraftImmediate(undefined);
-				setScreen({ type: "main-menu" });
+				setScreen({ type: "epic-list" });
 				break;
 			case "discard":
 				// Clear draft and start over

@@ -24,7 +24,7 @@ export function DescriptionStep() {
 			}
 			// Save draft to database immediately
 			saveDraftImmediate(undefined);
-			setScreen({ type: "main-menu" });
+			setScreen({ type: "epic-list" });
 		}
 		// Ctrl+Enter to submit
 		if (key.ctrl && key.name === "return") {

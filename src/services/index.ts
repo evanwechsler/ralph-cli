@@ -3,6 +3,7 @@ import { LiveDatabaseLayer, TestDatabaseLayer } from "../db/client.js";
 import { AgentClient } from "./AgentClient.js";
 import { AgentSessionRepository } from "./AgentSessionRepository.js";
 import { EpicDraftRepository } from "./EpicDraftRepository.js";
+import { EpicListService } from "./EpicListService.js";
 import { EpicRepository } from "./EpicRepository.js";
 import { ExternalEditor } from "./ExternalEditor.js";
 import { TaskRepository } from "./TaskRepository.js";
@@ -32,6 +33,12 @@ export {
 } from "./AgentSessionRepository.js";
 
 export { EpicDraftRepository, EpicDraftState } from "./EpicDraftRepository.js";
+
+export {
+	EpicListService,
+	type EpicListItem,
+	type EpicStatus,
+} from "./EpicListService.js";
 
 export {
 	AgentClient,
@@ -73,20 +80,29 @@ const RepositoryLayers = Layer.mergeAll(
 	EpicDraftRepository.Default,
 );
 
+// Services that depend on repositories
+const RepositoryDependentServices = Layer.mergeAll(EpicListService.Default);
+
 // Non-database services (no dependencies)
 const ServiceLayers = Layer.mergeAll(
 	AgentClient.Default,
 	ExternalEditor.Default,
 );
 
-// Production layer: Database + Repositories + Services
+// Production layer: Database + Repositories + Repository-dependent services + Services
 export const LiveServicesLayer = Layer.merge(
 	ServiceLayers,
-	Layer.provideMerge(RepositoryLayers, LiveDatabaseLayer),
+	Layer.provideMerge(
+		Layer.provideMerge(RepositoryDependentServices, RepositoryLayers),
+		LiveDatabaseLayer,
+	),
 );
 
-// Test layer: In-memory database + Repositories + Services
+// Test layer: In-memory database + Repositories + Repository-dependent services + Services
 export const TestServicesLayer = Layer.merge(
 	ServiceLayers,
-	Layer.provideMerge(RepositoryLayers, TestDatabaseLayer),
+	Layer.provideMerge(
+		Layer.provideMerge(RepositoryDependentServices, RepositoryLayers),
+		TestDatabaseLayer,
+	),
 );
